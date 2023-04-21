@@ -4,7 +4,8 @@ from tensorflow.python.lib.io.file_io import file_exists
 from TensorflowUtils.NeuralNetData import KerasNeuralNetData
 from TensorflowUtils.DirManager import KerasDirManager
 from TensorflowUtils.DataSet import DataSetABC
-
+from datetime import datetime as dt, timedelta
+from time import time
 
 from pandas import DataFrame, read_csv
 
@@ -70,6 +71,7 @@ class MultipleTrainingLogger(Callback):
         
         self.per_epoch_batch_results: dict = {}
         self.epoch_mean_results: dict = {}
+        self.training_time_seconds: float
 
         # Early Stoping attributes
 
@@ -89,6 +91,7 @@ class MultipleTrainingLogger(Callback):
 
         self.model_data_collector = None
 
+
         # states
 
         self.states_path = f"{dir_name}/states.json"
@@ -97,6 +100,15 @@ class MultipleTrainingLogger(Callback):
         
     
     # Geter methods
+
+    def get_date_time (self):
+        """returns YYYY-MM-DD, HH-MM"""
+        current_datetime = dt.now()
+        time = current_datetime.time()
+        date = current_datetime.date()
+        date_str = str(date)
+        time_str = time.strftime('%X')[:5]
+        return f"{date_str} {time_str}"
 
     def get_optimizer_kwargs(self) -> dict: 
         return self.model.optimizer.get_config()
@@ -109,9 +121,17 @@ class MultipleTrainingLogger(Callback):
         if isinstance(self.model.loss, Loss):
             return self.model.loss.__dict__
         
-        if issubclass(self.model.loss, Loss):
-            return self.model.loss().__dict__
-        
+        try:
+            if issubclass(self.model.loss, Loss):
+                return self.model.loss().__dict__
+        except TypeError:
+            pass
+            
+        try:
+            return {"name": self.model.loss.__name__}
+        except:
+            pass
+
         return {}
 
     def get_states (self) -> dict:
@@ -266,6 +286,10 @@ class MultipleTrainingLogger(Callback):
             "loss_args": self.get_loss_kwargs(),
             "data_set_info": self.get_data_set_kwargs(),
             "best_results": self.get_best_results(),
+            "date_time":self.get_date_time(),
+            "training_time_seconds": self.training_time_seconds,
+            "training_time": str(timedelta(seconds=self.training_time_seconds)),
+            "n_epochs": self.stoped_epoch + 1
         }
 
         return training_data 
@@ -283,6 +307,8 @@ class MultipleTrainingLogger(Callback):
                                            )
 
         self.model_data_collector = KerasNeuralNetData(self.model)
+
+        self.training_time_seconds = time()
 
 
     def on_epoch_begin(self, epoch, logs=None):
@@ -320,6 +346,8 @@ class MultipleTrainingLogger(Callback):
 
     
     def on_train_end(self, logs=None):
+
+        self.training_time_seconds = time() - self.training_time_seconds
         
         self._write_data_to_table(self.generate_training_data(), 
                                   unique_identifier = "training_idx", 
