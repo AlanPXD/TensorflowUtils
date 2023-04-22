@@ -142,7 +142,7 @@ class MultipleTrainingLogger(Callback):
                 json_str = json_file.read()
                 json_file.close()
                 
-            return json.load(json_str) 
+            return json.loads(json_str) 
         
         return {"training_idx": 0}
 
@@ -244,15 +244,21 @@ class MultipleTrainingLogger(Callback):
         dataframe.to_csv(table_path)
 
     
-    def progress_in_metric (self, metric_name):
+    def progress_in_metric (self, metric_name: str, best: Callable = None):
 
+        best_selector = best
+
+        if not best:
+            best_selector = min if metric_name == "loss" else max
+
+            
         if self.epoch_mean_results[metric_name].__len__() <= 1:
             return True
 
+        last_best_result = best_selector(self.epoch_mean_results[metric_name][:-1])
         last_result = self.epoch_mean_results[metric_name][-1]
-        penultimate_result = self.epoch_mean_results[metric_name][-2]
 
-        if last_result > penultimate_result:
+        if last_result > last_best_result:
             return True
         
         return False
