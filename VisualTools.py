@@ -1,6 +1,10 @@
 import matplotlib.pyplot as plt
+from numpy import ndarray, array
 
-def print_samples(image_matrix, line_labels, cmap='gray'):
+def print_samples(image_matrix, line_labels, cmap='gray', save_name = None):
+
+    if not isinstance(image_matrix, ndarray):
+        image_matrix = array(image_matrix)
 
     rows = image_matrix.shape[0]
     cols = image_matrix.shape[1]
@@ -32,5 +36,7 @@ def print_samples(image_matrix, line_labels, cmap='gray'):
             grid[row, col].set_title(f"{line_labels[row]} - {col}")
             grid[row, col].imshow(image_matrix[row, col], cmap=cmap, vmin=vmin , vmax=vmax)  # The AxesGrid object work as a list of axes.
 
+    if save_name:
+        plt.savefig(save_name)
     plt.show()
-    
+
