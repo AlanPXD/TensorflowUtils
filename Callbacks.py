@@ -1,10 +1,11 @@
 from tensorflow.keras.callbacks import Callback
 from tensorflow.keras.losses import Loss
 from tensorflow.python.lib.io.file_io import file_exists
-from TensorflowUtils.NeuralNetData import KerasNeuralNetData
-from TensorflowUtils.DirManager import KerasDirManager
-from TensorflowUtils.DataUtils import DataSetABC
+from TensorflowUtils.Compoments import KerasNeuralNetData
+from TensorflowUtils.Compoments import KerasDirManager
+from TensorflowUtils.DataSet import DataSet
 from datetime import datetime as dt, timedelta
+from numpy import save, array
 from time import time
 
 from pandas import DataFrame, read_csv
@@ -12,10 +13,9 @@ from pandas import DataFrame, read_csv
 from typing import Callable
 
 import numpy as np
-import tensorflow as tf
 import json
 
-class MultipleTrainingLogger(Callback):
+class BaseTrainingLogger(Callback):
     """
     A Callback to collect and save data of multiple trainings. It also have a 
     early stopping feature to ensure that all models are trained until satisfy a 
@@ -54,17 +54,15 @@ class MultipleTrainingLogger(Callback):
     """
 
     def __init__(self, 
-                 stop_function: Callable[[list, str, Callable], bool],
                  monitor_metric_name: str,
-                                  
+                 stop_function: Callable[[list, str, Callable], bool] = None,
                  dir_name: str = 'Logs',
                  trainings_csv_name: str = 'Trainings_data',
                  models_csv_name:str = 'Models_data',
-                 
                  data_set:object = None,
 
                 ):
-        super(MultipleTrainingLogger, self).__init__()
+        super(BaseTrainingLogger, self).__init__()
 
         self.data_set = data_set
 
@@ -91,7 +89,6 @@ class MultipleTrainingLogger(Callback):
         # Data collectors
 
         self.model_data_collector = None
-
 
         # states
 
@@ -167,8 +164,8 @@ class MultipleTrainingLogger(Callback):
         if self.data_set == None:
             return {"No data"}
         
-        if isinstance(self.data_set, DataSetABC):
-            return self.data_set.get_metadata()
+        if isinstance(self.data_set, DataSet):
+            return self.data_set.parameters
         
         return  {"No data"}
     
@@ -341,15 +338,17 @@ class MultipleTrainingLogger(Callback):
         
         self._append_epoch_mean()
 
-        self.model.stop_training = self.stop_function(self.epoch_mean_results, self.monitor_metric_name)
+        if self.stop_function:
+            self.model.stop_training = self.stop_function(self.epoch_mean_results, self.monitor_metric_name)
         
         self.stoped_epoch = epoch
 
         if self.progress_in_metric(self.monitor_metric_name):
             self.model.save(self.dir_manager.model_save_best_training_pathname)
 
-        if self.progress_in_metric(f"val_{self.monitor_metric_name}"):
-            self.model.save(self.dir_manager.model_save_best_validation_pathname)
+        if f"val_{self.monitor_metric_name}" in logs:
+            if self.progress_in_metric(f"val_{self.monitor_metric_name}"):
+                self.model.save(self.dir_manager.model_save_best_validation_pathname)
 
     
     def on_train_end(self, logs=None):
@@ -372,18 +371,84 @@ class MultipleTrainingLogger(Callback):
 
         self._save_states()
         
-        
-class GANMonitor(Callback):
-    def __init__(self, num_img=6, latent_dim=128):
-        self.num_img = num_img
-        self.latent_dim = latent_dim
+    
+
+class ImageToImageLogger(BaseTrainingLogger):
+
+    def __init__(self, samples_index, monitor_metric_name: str, stop_function: Callable = None, dir_name: str = 'Logs', trainings_csv_name: str = 'Trainings_data', models_csv_name: str = 'Models_data', data_set: object = None):
+        super().__init__(monitor_metric_name, stop_function, dir_name, trainings_csv_name, models_csv_name, data_set)
+        self.samples_index = samples_index
+        self.input_samples = data_set.x_test[samples_index]
+        self.all_samples = []
+
+    def get_samples(self):
+        generated_images = self.model(self.input_samples)
+        self.all_samples.append(generated_images.numpy())
+
+    def save_samples(self):
+        save(self.dir_manager.samples_path + "samples_idx.npy", array(self.samples_index))
+        save(self.dir_manager.samples_path + "input_samples.npy", array(self.input_samples))
+        save(self.dir_manager.samples_path+ "output_samples.npy", array(self.all_samples))
 
     def on_epoch_end(self, epoch, logs=None):
-        random_latent_vectors = tf.random.normal(shape=(self.num_img, self.latent_dim))
-        generated_images = self.model.generator(random_latent_vectors)
-        generated_images = (generated_images * 127.5) + 127.5
+        super().on_epoch_end(epoch, logs)
+        self.get_samples()
+        
+    def on_train_end(self, logs=None):
+        super().on_train_end(logs)
+        self.save_samples()
 
-        for i in range(self.num_img):
-            img = generated_images[i].numpy()
-            img = tf.keras.preprocessing.image.array_to_img(img)
-            img.save("generated_img_{i}_{epoch}.png".format(i=i, epoch=epoch))
+class GANTrainingLogger(BaseTrainingLogger):
+    
+    def __init__(self, samples_index, data_set, monitor_metric_name: str, stop_function: Callable = None,
+                 dir_name: str = 'Logs', trainings_csv_name: str = 'Trainings_data', models_csv_name: str = 'Models_data'):
+        super().__init__(monitor_metric_name, stop_function, dir_name, trainings_csv_name, models_csv_name, data_set)
+        self.samples_index = samples_index
+        self.sample_collector = None
+        self.input_samples = data_set.x_test[samples_index]
+        self.all_samples = []
+
+    def get_samples(self):
+        generated_images = self.model.generator(self.input_samples)
+        self.all_samples.append(generated_images.numpy())
+            
+    def save_samples(self):
+        save(self.dir_manager.samples_path + "samples_idx.npy", array(self.samples_index))
+        save(self.dir_manager.samples_path + "input_samples.npy", array(self.input_samples))
+        save(self.dir_manager.samples_path+ "output_samples.npy", array(self.all_samples))
+        
+    def on_train_begin(self, logs=None):
+        
+        self.dir_manager = KerasDirManager(logs_dir_name= self.dir_name,
+                                           model_name=self.get_model_name(),
+                                           trainings_csv_name= self.trainings_csv_name,
+                                           models_csv_name = self.models_csv_name,
+                                           dataset_name = self.data_set.get_metadata()["name"],
+                                           training_idx = self.states["training_idx"]
+                                           )
+
+        self.model_data_collector = KerasNeuralNetData(self.model.generator)
+        self.discriminator_data_collector = KerasNeuralNetData(self.model.discriminator)
+        
+        self.training_time_seconds = time()
+    
+    def get_loss_kwargs(self) -> dict:
+        return {"min_max_funciton":self.model.min_max_loss.__name__}
+    
+    def get_optimizer_kwargs(self) -> dict:
+        gen_op_config = self.model.g_optimizer.get_config()
+        dis_op_config = self.model.d_optimizer.get_config()
+        return {"Gen": gen_op_config, "Dis": dis_op_config}
+    
+    def on_epoch_end(self, epoch, logs=None):
+        super().on_epoch_end(epoch, logs)
+        self.get_samples(self.model.generator)
+        
+    def on_train_end(self, logs=None):
+        super().on_train_end(logs = logs)
+        
+        self._write_data_to_table(self.discriminator_data_collector.get_model_csv_data(),
+                                  unique_identifier="model_name",
+                                  table_path=self.dir_manager.models_table_pathname)
+        
+        self.save_samples()
